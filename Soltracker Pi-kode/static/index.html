@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pi-kontroll</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    .box { padding:12px; border:1px solid #ddd; border-radius:10px; margin: 14px 0; }
+    label { display:block; font-weight:600; margin:10px 0 6px; }
+    input[type="text"] { width:100%; padding:10px; font-size:16px; box-sizing: border-box; }
+    button { padding:10px 14px; font-size:16px; }
+    .danger { background:#c62828; color:white; border:0; }
+    pre { background:#0b0f14; color:#d7e1ea; padding:12px; border-radius:10px; overflow:auto; }
+    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+    .muted { color:#555; }
+  </style>
+</head>
+<body>
+  <h1>Pi-kontroll</h1>
+
+  <div class="box">
+    <label>Asimut i grader</label>
+    <input id="target_az" type="text" placeholder="Positiv retning til høyre" />
+    <label>Høyde i grader</label>
+    <input id="target_alt" type="text" placeholder="Positiv retning opp fra horisonten" />
+    <label>Asimut offset (milligrader)</label>
+    <input id="offset_az" type="text" placeholder="f.eks 500 = 0.5°"/>
+    <label>Høyde offset (milligrader)</label>
+    <input id="offset_alt" type="text" placeholder="f.eks 500 = 0.5°"/>
+    <button onclick="saveTargets()">Lagre målverdier</button>
+    <span id="targetsStatus" class="muted"></span>
+  </div>
+
+  <div class="box">
+    <div class="row">
+      <div>
+        <label style="margin:0;">Tracking</label>
+        <span id="trackingText" class="muted"></span>
+      </div>
+      <input type="checkbox" id="trackingToggle" onchange="setTracking()" />
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="row">
+      <strong>Asimut: current vs target</strong>
+      <span id="azDevText" class="muted"></span>
+    </div>
+    <canvas id="azChart" width="680" height="220"></canvas>
+  </div>
+
+  <div class="box">
+    <div class="row">
+      <strong>Høyde: current vs target</strong>
+      <span id="altDevText" class="muted"></span>
+    </div>
+    <canvas id="altChart" width="680" height="220"></canvas>
+  </div>
+
+  <div class="box">
+    <div class="row">
+      <strong>Manuell kontroll</strong>
+      <span id="manualStatus" class="muted"></span>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+      <button id="azDown" onclick="manualToggle('az','venstre')">Asimut Venstre</button>
+      <button id="azUp" onclick="manualToggle('az','høyre')">Asimut Høyre</button>
+      <button id="altUp" onclick="manualToggle('alt','opp')">Altitude Opp</button>
+      <button id="altDown" onclick="manualToggle('alt','ned')">Altitude Ned</button>
+      <button class="danger" id="stopAllBtn" onclick="manualStopAll()">STOPP ALLE</button>
+    </div>
+
+    <div class="muted" style="margin-top:8px;">
+      Manuelle knapper er deaktivert når tracking er PÅ.
+    </div>
+  </div>
+
+  <div class="box">
+    <button class="danger" id="shutdownBtn" onclick="doShutdown()">Shutdown Pi</button>
+    <span id="shutdownStatus" class="muted"></span>
+    <div class="muted" style="margin-top:8px;">
+      Shutdown-knappen er deaktivert når tracking er PÅ eller manuell styring er aktiv.
+    </div>
+  </div>
+
+  <div class="box">
+    <div class="row">
+      <strong>Status / logg (siste 50)</strong>
+    </div>
+    <pre id="logBox" style="height: 260px;"></pre>
+  </div>
+
+<script>
+
+const azData = [];
+const altData = [];
+const maxPoints = 480;
+
+const API = location.origin;
+
+async function refreshState() {
+  const res = await fetch(API + "/api/state");
+  const state = await res.json();
+
+  const toggle = document.getElementById("trackingToggle");
+  toggle.checked = !!state.tracking_enabled;
+
+  document.getElementById("trackingText").textContent =
+    state.tracking_enabled ? "Tracking er PÅ" : "Tracking er AV";
+
+  const trackingOn = !!state.tracking_enabled;
+  const manualActive = (state.manual_az !== "stop") || (state.manual_alt !== "stop");
+  document.getElementById("shutdownBtn").disabled = trackingOn || manualActive;
+
+  const manualDisabled = trackingOn;
+  ["azUp","azDown","altUp","altDown","stopAllBtn"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = manualDisabled;
+  });
+
+  const az = (state.manual_az || "stop").toUpperCase();
+  const alt = (state.manual_alt || "stop").toUpperCase();
+  document.getElementById("manualStatus").textContent =
+    manualDisabled ? "Låst (tracking PÅ)" : `AZ: ${az} | ALT: ${alt}`;
+
+  const current_az = Number(state.current_az);
+  const target_az = Number(state.target_az);
+
+  const current_alt = Number(state.current_alt);
+  const target_alt = Number(state.target_alt);
+
+  if (Number.isFinite(current_az) && Number.isFinite(target_az)) {
+    azData.push([current_az, target_az]);
+    if (azData.length > maxPoints) azData.shift();
+
+    const dev_az = target_az - current_az;
+    document.getElementById("azDevText").textContent =
+      `Avvik: ${dev_az.toFixed(3)}°`;
+  }
+
+  if (Number.isFinite(current_alt) && Number.isFinite(target_alt)) {
+    altData.push([current_alt, target_alt]);
+    if (altData.length > maxPoints) altData.shift();
+
+    const dev_alt = target_alt - current_alt;
+    document.getElementById("altDevText").textContent =
+      `Avvik: ${dev_alt.toFixed(3)}°`;
+  }
+
+  drawChart("azChart", azData);
+  drawChart("altChart", altData);
+}
+
+async function refreshLogs() {
+  const res = await fetch(API + "/api/logs?n=50");
+  const data = await res.json();
+  const logs = data.logs || [];
+  document.getElementById("logBox").textContent = logs.join("\n");
+}
+
+async function saveTargets() {
+  const target_az = document.getElementById("target_az").value;
+  const target_alt = document.getElementById("target_alt").value;
+  const offset_az = document.getElementById("offset_az").value;
+  const offset_alt = document.getElementById("offset_alt").value;
+
+  const res = await fetch(API + "/api/targets", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({target_az, target_alt, offset_az, offset_alt})
+  });
+
+  document.getElementById("targetsStatus").textContent = res.ok ? "Lagret." : "Feil.";
+}
+
+async function setTracking() {
+  const enabled = document.getElementById("trackingToggle").checked;
+  await fetch(API + "/api/tracking", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({enabled})
+  });
+  await refreshState();
+}
+
+async function manualToggle(axis, dir) {
+  const res = await fetch(API + "/api/manual/toggle", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ axis, dir })
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(()=> ({}));
+    alert("Feil: " + (data.error || res.status));
+  }
+  await refreshState();
+}
+
+async function manualStopAll() {
+  const res = await fetch(API + "/api/manual/stop_all", { method: "POST" });
+
+  if (!res.ok) {
+    const data = await res.json().catch(()=> ({}));
+    alert("Feil: " + (data.error || res.status));
+  }
+  await refreshState();
+}
+
+async function doShutdown() {
+  if (!confirm("Er du sikker på at du vil slå av Raspberry Pi?")) return;
+
+  const res = await fetch(API + "/api/shutdown", { method: "POST" });
+  const data = await res.json().catch(()=> ({}));
+
+  document.getElementById("shutdownStatus").textContent =
+    res.ok ? "Shutdown sendt." : ("Feil: " + (data.error || res.status));
+}
+
+function drawChart(canvasId, data) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (data.length < 2) return;
+
+  const padding = 25;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  const values = data.flat();
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+
+  function xPos(i) {
+    return padding + (i / (data.length - 1)) * (w - 2 * padding);
+  }
+
+  function yPos(v) {
+    return h - padding - ((v - min) / (max - min)) * (h - 2 * padding);
+  }
+
+  function drawLine(index) {
+    ctx.beginPath();
+    data.forEach((point, i) => {
+      const x = xPos(i);
+      const y = yPos(point[index]);
+
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // Akser
+  ctx.beginPath();
+  ctx.moveTo(padding, padding);
+  ctx.lineTo(padding, h - padding);
+  ctx.lineTo(w - padding, h - padding);
+  ctx.stroke();
+
+  // current
+  ctx.lineWidth = 2;
+  drawLine(0);
+
+  // target
+  ctx.setLineDash([6, 4]);
+  drawLine(1);
+  ctx.setLineDash([]);
+
+  ctx.lineWidth = 1;
+  ctx.fillText(`max ${max.toFixed(3)}°`, 4, padding);
+  ctx.fillText(`min ${min.toFixed(3)}°`, 4, h - padding);
+}
+
+refreshState();
+refreshLogs();
+setInterval(() => { refreshState(); }, 250);
+setInterval(() => { refreshLogs(); }, 1000);
+</script>
+</body>
+</html>
