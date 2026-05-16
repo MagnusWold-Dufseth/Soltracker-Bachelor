@@ -1,14 +1,14 @@
 # Bachelorprosjekt – Soltracker
 
-Dette repositoriet inneholder kildekoden brukt i bachelorprosjektet ved NTNU.
+Dette repositoriet inneholder kildekoden og dokumentasjonen brukt i bachelorprosjektet ved NTNU.
 
 ## Prosjektbeskrivelse
 
 Prosjektet omhandler utvikling av et to-akset soltrackingsystem styrt av en Raspberry Pi og en ESP32.
 
-Raspberry Pi brukes til bildebehandling og tracking, mens ESP32 håndterer regulering, sensorer og motorstyring.
+Raspberry Pi brukes til bildebehandling, webgrensesnitt og tracking, mens ESP32 håndterer regulering, sensorer og motorstyring.
 
-## Struktur
+## Kodestruktur
 
 ### `Soltracker ESP-kode/`
 Kode for:
@@ -21,6 +21,7 @@ Kode for:
 Kode for:
 - bildebehandling
 - objektsporing
+- webserver og brukergrensesnitt
 - kommunikasjon med ESP32
 
 ## Bacheloroppgave
