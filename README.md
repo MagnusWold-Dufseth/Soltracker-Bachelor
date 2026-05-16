@@ -1,6 +1,6 @@
 # Bachelorprosjekt – Soltracker
 
-Dette repositoriet inneholder kildekoden og dokumentasjonen brukt i bachelorprosjektet ved NTNU.
+Dette repositoriet inneholder kildekoden og brukermanualen brukt i bachelorprosjektet ved NTNU.
 
 ## Prosjektbeskrivelse
 
